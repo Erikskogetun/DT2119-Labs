@@ -1,4 +1,9 @@
 import numpy as np
+import os
+import random as rand
+from keras.utils import np_utils
+
+from sklearn.preprocessing import StandardScaler
 
 from prondict import prondict
 
@@ -38,7 +43,7 @@ def words2phones(wordList, pronDict, addSilence=True, addShortPause=True):
 
 
 
-def forcedAlignment(lmfcc, phoneHMMs, phoneTrans):
+def forcedAlignment(utteranceHMM, lmfcc, stateTrans):
     """ forcedAlignmen: aligns a phonetic transcription at the state level
 
     Args:
@@ -52,6 +57,40 @@ def forcedAlignment(lmfcc, phoneHMMs, phoneTrans):
        list of strings in the form phoneme_index specifying, for each time step
        the state from phoneHMMs corresponding to the viterbi path.
     """
+
+    lmndd = log_multivariate_normal_density_diag(lmfcc, utteranceHMM['means'], utteranceHMM['covars'])
+
+    viterbimax, viterbipath = viterbi(lmndd, np.log(utteranceHMM['startprob'][:-1]), np.log(utteranceHMM['transmat'][:-1, :-1]))
+
+    symbol_sequence = [stateTrans[i] for i in viterbipath]
+
+    transcription = frames2trans(symbol_sequence,'z43a.lab')
+
+    return symbol_sequence
+
+
+def saveFiles(datatype, discnr, phoneHMMs, stateList):
+    data = []
+    for root, dirs, files in os.walk('tidigits/disc_4.' + str(discnr) + '.1/tidigits/' + str(datatype)):
+        for idx, file in enumerate(files):
+            print(str(idx)+"/"+str(len(files)))
+            if file.endswith('.wav'):
+                filename = os.path.join(root, file)
+                samples, samplingrate = loadAudio(filename)
+                samplelmfcc = mfcc(samples)
+                samplemspec = mspec(samples)
+                wordTrans = list(path2info(filename)[2])
+                phoneTrans = words2phones(wordTrans, prondict)
+                utteranceHMM = concatHMMs(phoneHMMs, phoneTrans)
+                stateTrans = [phone + '_' + str(stateid) for phone in phoneTrans for stateid in range(nstates[phone])]
+
+                symbol_sequence = forcedAlignment(utteranceHMM, samplelmfcc, stateTrans)
+                targets =  np.array([stateList.index(target) for target in symbol_sequence])
+
+                data.append({'filename': filename, 'lmfcc': samplelmfcc, 'mspec': samplemspec, 'targets': targets})
+
+    np.savez(str(datatype) + 'data' + discnr + '.npz', data=data)
+
 
 
 def hmmLoop(hmmmodels, namelist=None):
@@ -82,41 +121,188 @@ def hmmLoop(hmmmodels, namelist=None):
        wordLoop = hmmLoop(wordHMMs, ['o', 'z', '1', '2', '3'])
     """
 
+def splitSet(input):
+    np.random.shuffle(input)
 
+    trainingset = []
+    validationset = []
+
+    trainingspeakers = []
+    validationspeakers = []
+
+    # [0][0] : men training
+    # [0][1] : women training
+    # [1][0] : men validation
+    # [1][1] : women validation
+    setdistribution = [[0 for i in range(0,2)] for j in range(0,2)]
+
+    for datapoint in input:
+        characteristicarray = datapoint['filename'].split("\\")
+        gender = characteristicarray[1]
+        speaker = characteristicarray[2]
+
+        if speaker in trainingspeakers:
+            trainingset.append(datapoint)
+            if gender == 'man' or gender == 'boy':
+                setdistribution[0][0] += 1
+            elif gender == 'woman' or gender == 'girl':
+                setdistribution[0][1] += 1
+        elif speaker in validationspeakers:
+            validationset.append(datapoint)
+            if gender == 'man' or gender == 'boy':
+                setdistribution[1][0] += 1
+            elif gender == 'woman' or gender == 'girl':
+                setdistribution[1][1] += 1
+        else:
+            decider = rand.uniform(0, 1)
+
+            setratio = 0
+
+            if (gender == 'man'  or gender == 'boy') and (setdistribution[1][0] + setdistribution[0][0] != 0):
+                setratio = 0.1 - setdistribution[1][0] / (setdistribution[1][0] + setdistribution[0][0])
+            elif (gender == 'woman'  or gender == 'girl') and (setdistribution[1][1] + setdistribution[0][1] != 0):
+                setratio = 0.1 - setdistribution[1][1] / (setdistribution[1][1] + setdistribution[0][1])
+
+            decider += setratio
+
+            if decider > 0.9:
+                validationset.append(datapoint)
+
+                validationspeakers.append(speaker)
+                if gender == 'man' or gender == 'boy':
+                    setdistribution[1][0] += 1
+                elif gender == 'woman' or gender == 'girl':
+                    setdistribution[1][1] += 1
+            else:
+                trainingset.append(datapoint)
+                trainingspeakers.append(speaker)
+                if gender == 'man' or gender == 'boy':
+                    setdistribution[0][0] += 1
+                elif gender == 'woman' or gender == 'girl':
+                    setdistribution[0][1] += 1
+
+    print("male training: " + str(setdistribution[0][0]))
+    print("female training: " + str(setdistribution[0][1]))
+    print("male validation: " + str(setdistribution[1][0]))
+    print("female validation: " + str(setdistribution[1][1]))
+    print("validation percentage: " + str(100*(setdistribution[1][0]+setdistribution[1][0])/len(input)))
+    print("female percentage: " + str(100*(setdistribution[0][1]+setdistribution[1][1])/len(input)))
+
+    np.savez('splitdata.npz', trainingdata=trainingset, validationdata=validationset)
+
+def dynamic_features(feature):
+    N = feature.shape[0]
+    M = feature.shape[1] * 7
+    dyn = np.zeros((N, M))
+
+    maxidx = len(feature) - 1
+    for idx, row in enumerate(feature):
+        idxarray = np.abs(np.arange(idx-3, idx+4))
+        idxarray = np.where(idxarray >= maxidx, maxidx - idxarray % maxidx, idxarray)
+        dyn[idx, :] = feature[tuple([idxarray])].flatten()
+
+    return dyn
+
+def standardize(dataset, feature, type, hasDynamicFeatures, scaler = None):
+    print("Standardize")
+
+    if type == 'all':
+        C = 0
+
+        sizes = np.zeros(len(dataset), dtype="int32")
+        for i in range(len(dataset)):
+            sizes[i] = dataset[i][feature].shape[0]
+
+        C = np.sum(sizes, dtype="int32")
+        if feature == 'targets':
+            data = np.zeros((C, 1), dtype=np.float32)
+        else:
+            N =  dataset[0][feature].shape[1]
+            data = np.zeros((C, N + (N*6*hasDynamicFeatures)), dtype=np.float32)
+
+        start_idx = 0
+        for i in range(len(dataset)):
+            if hasDynamicFeatures and feature != 'targets':
+                data[start_idx: start_idx + sizes[i], :] = dynamic_features(dataset[i][feature])
+            else:
+                data[start_idx: start_idx + sizes[i], :] = dataset[i][feature].reshape(sizes[i], 1)
+            start_idx += sizes[i]
+
+    elif type == 'speaker':
+        pass
+    elif type == 'utterance':
+        pass
+
+    if scaler != None:
+        scaler.fit_transform(data)
+
+    return data
+
+
+# -- Load model and create stateList -- #
 phoneHMMs = np.load('lab2_models_v2.npz')['phoneHMMs'].item() # Ska egentligen använda models_all
 phones = sorted(phoneHMMs.keys())
 nstates = {phone: phoneHMMs[phone]['means'].shape[0] for phone in phones}
 stateList = [ph + '_' + str(id) for ph in phones for id in range(nstates[ph])]
-#print(stateList)
 
-filename = 'tidigits/disc_4.1.1/tidigits/train/man/nw/z43a.wav'
-samples, samplingrate = loadAudio(filename)
-lmfcc = mfcc(samples)
+# -- Will create the initial file -- #
+saveFiles('train', '1', phoneHMMs, stateList)
+saveFiles('train', '3', phoneHMMs, stateList)
+saveFiles('test', '3', phoneHMMs, stateList)
 
-wordTrans = list(path2info(filename)[2])
-#print(wordTrans)
+# -- Loads the initial npz file, and creates a training/validation split -- #
+npzfile = np.load("traindata1.npz")
+splitSet(npzfile['data'])
+npzfile = np.load("traindata3.npz")
+splitSet(npzfile['data'])
 
-phoneTrans = words2phones(wordTrans, prondict, addShortPause=True)
-print(phoneTrans)
+# -- Loads the test, training and validation dataset file -- #
+splitdata = np.load("splitdata.npz")
+testdata = np.load("testdata3.npz")['data']
+trainingdata = splitdata['trainingdata']
+validationdata = splitdata['validationdata']
 
-utteranceHMM = concatHMMs(phoneHMMs, phoneTrans)
-#print(utteranceHMM.keys())
+# -- Define the scaler -- #
+scaler = StandardScaler()
 
-stateTrans = [phone + '_' + str(stateid) for phone in phoneTrans for stateid in range(nstates[phone])]
-#print(stateTrans)
+# -- Create the standardized datasets with dynamic features -- #
+lmfcc_train_x_dyn = standardize(trainingdata, 'lmfcc' , 'all', True, scaler)
+print(lmfcc_train_x_dyn.shape)
+lmfcc_val_x_dyn = standardize(validationdata, 'lmfcc' , 'all', True, scaler)
+print(lmfcc_val_x_dyn.shape)
+lmfcc_test_x_dyn = standardize(testdata, 'lmfcc' , 'all', True, scaler)
+print(lmfcc_test_x_dyn.shape)
 
-print(lmfcc)
-lmndd = log_multivariate_normal_density_diag(lmfcc, utteranceHMM['means'], utteranceHMM['covars'])
-print(lmndd.shape)
-print(lmndd)
+# TODO: VArför inte 280?
+mspec_train_x_dyn = standardize(trainingdata, 'mspec' , 'all', True, scaler)
+print(mspec_train_x_dyn.shape)
+mspec_val_x_dyn = standardize(validationdata, 'mspec' , 'all', True, scaler)
+print(mspec_val_x_dyn.shape)
+mspec_test_x_dyn = standardize(testdata, 'mspec' , 'all', True, scaler)
+print(mspec_test_x_dyn.shape)
 
-#print(lmndd.shape)
-#print(utteranceHMM)
-viterbimax, viterbipath = viterbi(lmndd, np.log(utteranceHMM['startprob'][:-1]), np.log(utteranceHMM['transmat'][:-1, :-1]))
-print(viterbimax)
-print(viterbipath)
+# -- Create the standardized datasets with regular features -- #
+lmfcc_train_x_reg = standardize(trainingdata, 'lmfcc' , 'all', True, scaler)
+print(lmfcc_train_x_reg.shape)
+lmfcc_val_x_reg = standardize(validationdata, 'lmfcc' , 'all', True, scaler)
+print(lmfcc_val_x_reg.shape)
+lmfcc_test_x_reg = standardize(testdata, 'lmfcc' , 'all', True, scaler)
+print(lmfcc_test_x_reg.shape)
 
-#print(stateTrans)
-symbol_sequence = [stateTrans[i] for i in viterbipath]
-transcription = frames2trans(symbol_sequence,'z43a.lab')
-print(transcription)
+# TODO: VArför inte 280?
+mspec_train_x_reg = standardize(trainingdata, 'mspec' , 'all', True, scaler)
+print(mspec_train_x_reg.shape)
+mspec_val_x_reg = standardize(validationdata, 'mspec' , 'all', True, scaler)
+print(mspec_val_x_reg.shape)
+mspec_test_x_reg = standardize(testdata, 'mspec' , 'all', True, scaler)
+print(mspec_test_x_reg.shape)
+
+# -- Create the target datasets -- #
+train_y = standardize(trainingdata, 'targets', 'all', False)
+print(train_y.shape)
+val_y = standardize(validationdata, 'targets', 'all', False)
+print(val_y.shape)
+test_y = standardize(testdata, 'targets', 'all', False)
+print(test_y.shape)
+
+train_y = np_utils.to_categorical(train_y, len(stateList))
