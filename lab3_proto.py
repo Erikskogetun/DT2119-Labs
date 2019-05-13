@@ -8,8 +8,10 @@ import keras
 from keras.utils import np_utils
 from keras.models import Sequential
 from keras.layers import Dense, Activation
+from keras.models import load_model
 
 from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import confusion_matrix
 
 import matplotlib.pyplot as plt
 
@@ -278,7 +280,7 @@ def plotHistory(filename):
 
 def modelBuilder(stateList, shouldSave, feature, type):
     hiddenLayers = 3
-    epochs = 1
+    epochs = 15
 
     outputDim = len(stateList)
 
@@ -303,13 +305,82 @@ def modelBuilder(stateList, shouldSave, feature, type):
     model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
 
     # Train the model
-    history = model.fit(train_x, train_y, epochs=epochs, batch_size=256, validation_data = (val_x, val_y), verbose = 1)
+    history = model.fit(x = train_x, y = train_y, epochs=epochs, batch_size=256, validation_data = (val_x, val_y), verbose = 1)
 
     if shouldSave:
         model.save('model/model_' + feature + '_' + type + '.h5')
 
         with open("history/trainHistoryDict_" + feature + '_' + type + '_' + str(hiddenLayers) + ".pickle", 'wb') as f:
             pickle.dump(history.history, f)
+
+
+
+def plot_confusion_matrix(cm, classes,
+                          normalize=False,
+                          title='Confusion matrix',
+                          cmap=plt.cm.viridis):
+    """
+    This function prints and plots the confusion matrix.
+    Normalization can be applied by setting `normalize=True`.
+    """
+    if normalize:
+        cm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+        print("Normalized confusion matrix")
+    else:
+        print('Confusion matrix, without normalization')
+
+    print(cm)
+
+    plt.imshow(cm, interpolation='nearest', cmap=cmap)
+    plt.title(title)
+    plt.colorbar()
+    tick_marks = np.arange(len(classes))
+    plt.xticks(tick_marks, classes, rotation=45)
+    plt.yticks(tick_marks, classes)
+    #plt.tight_layout()
+    plt.ylabel('True label')
+    plt.xlabel('Predicted label')
+
+def evaluateModel(stateList, feature, type, method):
+    print("Evaluate model for feature " + feature + " and feature type " + type)
+    outputDim = len(stateList)
+
+    test_x = np.load("standardized/" + feature + "_test_x_"+ type +".npz", allow_pickle=True)['data'].astype('float32')
+    test_y_noncat = np.load("standardized/test_y.npz", allow_pickle=True)['data'].astype('float32')
+    test_y = np_utils.to_categorical(test_y_noncat, outputDim)
+    y_truth = np.argmax(test_y, axis = 1)
+
+    model = load_model('model/model_' + feature + '_'  + type + '.h5')
+    prediction = model.predict(test_x)
+    pred_y = np.argmax(prediction, axis = 1)
+
+    if method == 1:
+        # -- frame-by-frame at the state level -- #
+        accuracy = np.count_nonzero(y_truth == pred_y) / float(len(y_truth))
+        print("Model accuracy: " + str(accuracy))
+        # compute confuson matrix!
+        matrix = confusion_matrix(y_truth, pred_y)
+        print(matrix)
+
+        plt.pcolormesh(matrix)
+        plt.show()
+
+        cnf_matrix = confusion_matrix(y_truth, pred_y, labels = [i for i in range(len(stateList))])
+        plot_confusion_matrix(cnf_matrix, classes = stateList, normalize=True)
+        plt.show()
+
+
+    elif method == 2:
+        # -- frame-by-frame at the phoneme level -- #
+        # compute confuson matrix!
+        pass
+    elif method == 3:
+        # -- edit distance at the state level -- #
+        pass
+    elif method == 4:
+        # -- edit distance at the phoneme level -- #
+        pass
+
 
 
 # -- Load model and create stateList -- #
@@ -320,7 +391,6 @@ nstates = {phone: phoneHMMs[phone]['means'].shape[0] for phone in phones}
 stateList = [ph + '_' + str(id) for ph in phones for id in range(nstates[ph])]
 
 '''
-
 # -- Will create the initial file -- #
 saveFiles('train', '1', phoneHMMs, stateList)
 saveFiles('test', '2', phoneHMMs, stateList)
@@ -362,9 +432,13 @@ mspec_test_x_reg = standardize(testdata, 'mspec' , 'all', False, scaler, "mspec_
 train_y = standardize(trainingdata, 'targets', 'all', False, None, "train_y")
 val_y = standardize(validationdata, 'targets', 'all', False, None, "val_y")
 test_y = standardize(testdata, 'targets', 'all', False, None, "test_y")
-
 '''
 
-modelBuilder(stateList, True, "lmfcc", "reg")
+#modelBuilder(stateList, True, "lmfcc", "reg") # Lukas kör
+#modelBuilder(stateList, True, "mspec", "reg") # Lukas kör
+#modelBuilder(stateList, True, "lmfcc", "dyn") # Jag kör
+#modelBuilder(stateList, True, "mspec", "dyn") # Kör via datorn hemma
 
 #plotHistory("history/trainHistoryDict_3.pickle")
+
+evaluateModel(stateList, "lmfcc", "dyn", 1)
