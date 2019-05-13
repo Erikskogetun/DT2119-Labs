@@ -2,13 +2,16 @@ import numpy as np
 import os
 import random as rand
 
-import keras
+import pickle
 
+import keras
 from keras.utils import np_utils
 from keras.models import Sequential
 from keras.layers import Dense, Activation
 
 from sklearn.preprocessing import StandardScaler
+
+import matplotlib.pyplot as plt
 
 from prondict import prondict
 
@@ -248,7 +251,29 @@ def standardize(dataset, feature, type, hasDynamicFeatures, scaler = None, saveA
 
     return data
 
-def modelBuilder(stateList, saveModel):
+def plotHistory():
+    pickle_in = open("dict.pickle","rb")
+    history = pickle.load(pickle_in)
+
+    print(history.keys())
+    # summarize history for accuracy
+    plt.plot(history['acc'])
+    plt.plot(history['val_acc'])
+    plt.title('model accuracy')
+    plt.ylabel('accuracy')
+    plt.xlabel('epoch')
+    plt.legend(['train', 'test'], loc='upper left')
+    plt.show()
+    # summarize history for loss
+    plt.plot(history['loss'])
+    plt.plot(history['val_loss'])
+    plt.title('model loss')
+    plt.ylabel('loss')
+    plt.xlabel('epoch')
+    plt.legend(['train', 'test'], loc='upper left')
+    plt.show()
+
+def modelBuilder(stateList, shouldSave):
 
     hiddenLayers = 3
     outputDim = len(stateList)
@@ -274,13 +299,17 @@ def modelBuilder(stateList, saveModel):
     model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
 
     # Train the model
-    history = model.fit(lmfcc_train_x_reg, train_y, epochs=25, batch_size=256, validation_data = (lmfcc_val_x_reg, val_y), verbose = 1)
+    history = model.fit(lmfcc_train_x_reg, train_y, epochs=1, batch_size=256, validation_data = (lmfcc_val_x_reg, val_y), verbose = 1)
 
-    #with open("history/trainHistoryDict_" + str(args.hidden_layer_no), 'wb') as file_pi:
-    #    pickle.dump(history.history, file_pi)
+    #if shouldPlot:
+    #    plotHistory(history)
 
-    if saveModel:
+    if shouldSave:
         model.save('model/model1.h5')
+
+        with open("history/trainHistoryDict_" + str(hiddenLayers), 'wb') as f:
+            pickle.dump(history.history, f)
+
         print("Learned weights are saved in model/model1.h5")
 
 
@@ -341,4 +370,7 @@ test_y = standardize(testdata, 'targets', 'all', False, None, "test_y")
 
 '''
 
-#modelBuilder(stateList, True)
+modelBuilder(stateList, True)
+
+
+#plotHistory()
