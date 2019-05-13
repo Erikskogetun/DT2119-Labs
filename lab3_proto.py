@@ -1,7 +1,12 @@
 import numpy as np
 import os
 import random as rand
+
+import keras
+
 from keras.utils import np_utils
+from keras.models import Sequential
+from keras.layers import Dense, Activation
 
 from sklearn.preprocessing import StandardScaler
 
@@ -73,7 +78,6 @@ def saveFiles(datatype, discnr, phoneHMMs, stateList):
     data = []
     for root, dirs, files in os.walk('tidigits/disc_4.' + str(discnr) + '.1/tidigits/' + str(datatype)):
         for idx, file in enumerate(files):
-            print(str(idx)+"/"+str(len(files)))
             if file.endswith('.wav'):
                 filename = os.path.join(root, file)
                 samples, samplingrate = loadAudio(filename)
@@ -203,7 +207,7 @@ def dynamic_features(feature):
 
     return dyn
 
-def standardize(dataset, feature, type, hasDynamicFeatures, scaler = None):
+def standardize(dataset, feature, type, hasDynamicFeatures, scaler = None, saveAs = None):
     print("Standardize")
 
     if type == 'all':
@@ -222,10 +226,12 @@ def standardize(dataset, feature, type, hasDynamicFeatures, scaler = None):
 
         start_idx = 0
         for i in range(len(dataset)):
-            if hasDynamicFeatures and feature != 'targets':
+            if hasDynamicFeatures and feature != 'targets': # If not targets and has dynamic features
                 data[start_idx: start_idx + sizes[i], :] = dynamic_features(dataset[i][feature])
-            else:
+            elif feature == 'targets': # If targets (w/o dynamic features)
                 data[start_idx: start_idx + sizes[i], :] = dataset[i][feature].reshape(sizes[i], 1)
+            else: # If not targets and not has dynamic features
+                data[start_idx: start_idx + sizes[i], :] = dataset[i][feature]
             start_idx += sizes[i]
 
     elif type == 'speaker':
@@ -236,73 +242,103 @@ def standardize(dataset, feature, type, hasDynamicFeatures, scaler = None):
     if scaler != None:
         scaler.fit_transform(data)
 
+    if saveAs != None:
+        np.savez('standardized/' + saveAs + '.npz', data=data)
+
+
     return data
+
+def modelBuilder(stateList, saveModel):
+
+    hiddenLayers = 3
+    outputDim = len(stateList)
+
+    lmfcc_train_x_reg = np.load("standardized/lmfcc_train_x_reg.npz", allow_pickle=True)['data'].astype('float32')
+    train_y_noncat = np.load("standardized/train_y.npz", allow_pickle=True)['data']
+    train_y = np_utils.to_categorical(train_y_noncat, outputDim)
+
+    lmfcc_val_x_reg = np.load("standardized/lmfcc_val_x_reg.npz", allow_pickle=True)['data'].astype('float32')
+    val_y_noncat = np.load("standardized/val_y.npz", allow_pickle=True)['data']
+    val_y = np_utils.to_categorical(val_y_noncat, outputDim)
+    input_dim = lmfcc_train_x_reg.shape[1]
+
+    model = Sequential()
+    model.add(Dense(256, input_dim=input_dim, activation='relu'))
+
+    for i in range(hiddenLayers - 1):
+        model.add(Dense(256, activation='relu'))
+
+    model.add(Dense(outputDim, activation='softmax'))
+
+    # Compile the model
+    model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+
+    # Train the model
+    history = model.fit(lmfcc_train_x_reg, train_y, epochs=25, batch_size=256, validation_data = (lmfcc_val_x_reg, val_y), verbose = 1)
+
+    #with open("history/trainHistoryDict_" + str(args.hidden_layer_no), 'wb') as file_pi:
+    #    pickle.dump(history.history, file_pi)
+
+    if saveModel:
+        model.save('model/model1.h5')
+        print("Learned weights are saved in model/model1.h5")
 
 
 # -- Load model and create stateList -- #
-phoneHMMs = np.load('lab2_models_v2.npz')['phoneHMMs'].item() # Ska egentligen använda models_all
+print("Load model and statelist")
+phoneHMMs = np.load('lab2_models_v2.npz', allow_pickle=True)['phoneHMMs'].item() # Ska egentligen använda models_all
 phones = sorted(phoneHMMs.keys())
 nstates = {phone: phoneHMMs[phone]['means'].shape[0] for phone in phones}
 stateList = [ph + '_' + str(id) for ph in phones for id in range(nstates[ph])]
 
+'''
+
 # -- Will create the initial file -- #
 saveFiles('train', '1', phoneHMMs, stateList)
-saveFiles('train', '3', phoneHMMs, stateList)
-saveFiles('test', '3', phoneHMMs, stateList)
+saveFiles('test', '2', phoneHMMs, stateList)
+
 
 # -- Loads the initial npz file, and creates a training/validation split -- #
-npzfile = np.load("traindata1.npz")
-splitSet(npzfile['data'])
-npzfile = np.load("traindata3.npz")
+npzfile = np.load("traindata1.npz", allow_pickle=True)
 splitSet(npzfile['data'])
 
+
 # -- Loads the test, training and validation dataset file -- #
-splitdata = np.load("splitdata.npz")
-testdata = np.load("testdata3.npz")['data']
+print("Open data files")
+splitdata = np.load("splitdata.npz", allow_pickle=True)
+testdata = np.load("testdata2.npz", allow_pickle=True)['data']
 trainingdata = splitdata['trainingdata']
 validationdata = splitdata['validationdata']
 
+print("SCALE")
 # -- Define the scaler -- #
 scaler = StandardScaler()
 
 # -- Create the standardized datasets with dynamic features -- #
-lmfcc_train_x_dyn = standardize(trainingdata, 'lmfcc' , 'all', True, scaler)
-print(lmfcc_train_x_dyn.shape)
-lmfcc_val_x_dyn = standardize(validationdata, 'lmfcc' , 'all', True, scaler)
-print(lmfcc_val_x_dyn.shape)
-lmfcc_test_x_dyn = standardize(testdata, 'lmfcc' , 'all', True, scaler)
-print(lmfcc_test_x_dyn.shape)
+lmfcc_train_x_dyn = standardize(trainingdata, 'lmfcc' , 'all', True, scaler, "lmfcc_train_x_dyn")
+lmfcc_val_x_dyn = standardize(validationdata, 'lmfcc' , 'all', True, scaler, "lmfcc_val_x_dyn")
+lmfcc_test_x_dyn = standardize(testdata, 'lmfcc' , 'all', True, scaler, "lmfcc_test_x_dyn")
 
 # TODO: VArför inte 280?
-mspec_train_x_dyn = standardize(trainingdata, 'mspec' , 'all', True, scaler)
-print(mspec_train_x_dyn.shape)
-mspec_val_x_dyn = standardize(validationdata, 'mspec' , 'all', True, scaler)
-print(mspec_val_x_dyn.shape)
-mspec_test_x_dyn = standardize(testdata, 'mspec' , 'all', True, scaler)
-print(mspec_test_x_dyn.shape)
+mspec_train_x_dyn = standardize(trainingdata, 'mspec' , 'all', True, scaler, "mspec_train_x_dyn")
+mspec_val_x_dyn = standardize(validationdata, 'mspec' , 'all', True, scaler, "mspec_val_x_dyn")
+mspec_test_x_dyn = standardize(testdata, 'mspec' , 'all', True, scaler, "mspec_test_x_dyn")
 
 # -- Create the standardized datasets with regular features -- #
-lmfcc_train_x_reg = standardize(trainingdata, 'lmfcc' , 'all', True, scaler)
-print(lmfcc_train_x_reg.shape)
-lmfcc_val_x_reg = standardize(validationdata, 'lmfcc' , 'all', True, scaler)
-print(lmfcc_val_x_reg.shape)
-lmfcc_test_x_reg = standardize(testdata, 'lmfcc' , 'all', True, scaler)
-print(lmfcc_test_x_reg.shape)
+lmfcc_train_x_reg = standardize(trainingdata, 'lmfcc' , 'all', False, scaler, "lmfcc_train_x_reg")
+lmfcc_val_x_reg = standardize(validationdata, 'lmfcc' , 'all', False, scaler, "lmfcc_val_x_reg")
+lmfcc_test_x_reg = standardize(testdata, 'lmfcc' , 'all', False, scaler, "lmfcc_test_x_reg")
 
 # TODO: VArför inte 280?
-mspec_train_x_reg = standardize(trainingdata, 'mspec' , 'all', True, scaler)
-print(mspec_train_x_reg.shape)
-mspec_val_x_reg = standardize(validationdata, 'mspec' , 'all', True, scaler)
-print(mspec_val_x_reg.shape)
-mspec_test_x_reg = standardize(testdata, 'mspec' , 'all', True, scaler)
-print(mspec_test_x_reg.shape)
+mspec_train_x_reg = standardize(trainingdata, 'mspec' , 'all', False, scaler, "mspec_train_x_reg")
+mspec_val_x_reg = standardize(validationdata, 'mspec' , 'all', False, scaler, "mspec_val_x_reg")
+mspec_test_x_reg = standardize(testdata, 'mspec' , 'all', False, scaler, "mspec_test_x_reg")
 
 # -- Create the target datasets -- #
-train_y = standardize(trainingdata, 'targets', 'all', False)
-print(train_y.shape)
-val_y = standardize(validationdata, 'targets', 'all', False)
-print(val_y.shape)
-test_y = standardize(testdata, 'targets', 'all', False)
-print(test_y.shape)
+train_y = standardize(trainingdata, 'targets', 'all', False, None, "train_y")
+val_y = standardize(validationdata, 'targets', 'all', False, None, "val_y")
+test_y = standardize(testdata, 'targets', 'all', False, None, "test_y")
 
-train_y = np_utils.to_categorical(train_y, len(stateList))
+'''
+
+#modelBuilder(stateList, True)
