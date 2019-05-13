@@ -252,30 +252,35 @@ def standardize(dataset, feature, type, hasDynamicFeatures, scaler = None, saveA
     return data
 
 def plotHistory():
-    pickle_in = open("dict.pickle","rb")
+    pickle_in = open("history/trainHistoryDict_3.pickle","rb")
     history = pickle.load(pickle_in)
 
     print(history.keys())
     # summarize history for accuracy
+
+    plt.subplot(2,1,1)
+
     plt.plot(history['acc'])
     plt.plot(history['val_acc'])
     plt.title('model accuracy')
     plt.ylabel('accuracy')
     plt.xlabel('epoch')
-    plt.legend(['train', 'test'], loc='upper left')
-    plt.show()
+    plt.legend(['train', 'validation'], loc='upper left')
+    plt.subplot(2,1,2)
     # summarize history for loss
     plt.plot(history['loss'])
     plt.plot(history['val_loss'])
     plt.title('model loss')
     plt.ylabel('loss')
     plt.xlabel('epoch')
-    plt.legend(['train', 'test'], loc='upper left')
+    plt.legend(['train', 'validation'], loc='upper left')
     plt.show()
 
 def modelBuilder(stateList, shouldSave):
 
     hiddenLayers = 3
+    epochs = 20
+
     outputDim = len(stateList)
 
     lmfcc_train_x_reg = np.load("standardized/lmfcc_train_x_reg.npz", allow_pickle=True)['data'].astype('float32')
@@ -299,15 +304,12 @@ def modelBuilder(stateList, shouldSave):
     model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
 
     # Train the model
-    history = model.fit(lmfcc_train_x_reg, train_y, epochs=1, batch_size=256, validation_data = (lmfcc_val_x_reg, val_y), verbose = 1)
-
-    #if shouldPlot:
-    #    plotHistory(history)
+    history = model.fit(lmfcc_train_x_reg, train_y, epochs=epochs, batch_size=256, validation_data = (lmfcc_val_x_reg, val_y), verbose = 1)
 
     if shouldSave:
         model.save('model/model1.h5')
 
-        with open("history/trainHistoryDict_" + str(hiddenLayers), 'wb') as f:
+        with open("history/trainHistoryDict_" + str(hiddenLayers) + ".pickle", 'wb') as f:
             pickle.dump(history.history, f)
 
         print("Learned weights are saved in model/model1.h5")
@@ -347,8 +349,6 @@ scaler = StandardScaler()
 lmfcc_train_x_dyn = standardize(trainingdata, 'lmfcc' , 'all', True, scaler, "lmfcc_train_x_dyn")
 lmfcc_val_x_dyn = standardize(validationdata, 'lmfcc' , 'all', True, scaler, "lmfcc_val_x_dyn")
 lmfcc_test_x_dyn = standardize(testdata, 'lmfcc' , 'all', True, scaler, "lmfcc_test_x_dyn")
-
-# TODO: VArför inte 280?
 mspec_train_x_dyn = standardize(trainingdata, 'mspec' , 'all', True, scaler, "mspec_train_x_dyn")
 mspec_val_x_dyn = standardize(validationdata, 'mspec' , 'all', True, scaler, "mspec_val_x_dyn")
 mspec_test_x_dyn = standardize(testdata, 'mspec' , 'all', True, scaler, "mspec_test_x_dyn")
@@ -357,8 +357,6 @@ mspec_test_x_dyn = standardize(testdata, 'mspec' , 'all', True, scaler, "mspec_t
 lmfcc_train_x_reg = standardize(trainingdata, 'lmfcc' , 'all', False, scaler, "lmfcc_train_x_reg")
 lmfcc_val_x_reg = standardize(validationdata, 'lmfcc' , 'all', False, scaler, "lmfcc_val_x_reg")
 lmfcc_test_x_reg = standardize(testdata, 'lmfcc' , 'all', False, scaler, "lmfcc_test_x_reg")
-
-# TODO: VArför inte 280?
 mspec_train_x_reg = standardize(trainingdata, 'mspec' , 'all', False, scaler, "mspec_train_x_reg")
 mspec_val_x_reg = standardize(validationdata, 'mspec' , 'all', False, scaler, "mspec_val_x_reg")
 mspec_test_x_reg = standardize(testdata, 'mspec' , 'all', False, scaler, "mspec_test_x_reg")
@@ -370,7 +368,7 @@ test_y = standardize(testdata, 'targets', 'all', False, None, "test_y")
 
 '''
 
-modelBuilder(stateList, True)
+#modelBuilder(stateList, True)
 
 
-#plotHistory()
+plotHistory()
