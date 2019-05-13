@@ -251,8 +251,8 @@ def standardize(dataset, feature, type, hasDynamicFeatures, scaler = None, saveA
 
     return data
 
-def plotHistory():
-    pickle_in = open("history/trainHistoryDict_3.pickle","rb")
+def plotHistory(filename):
+    pickle_in = open(filename,"rb")
     history = pickle.load(pickle_in)
 
     print(history.keys())
@@ -276,21 +276,20 @@ def plotHistory():
     plt.legend(['train', 'validation'], loc='upper left')
     plt.show()
 
-def modelBuilder(stateList, shouldSave):
-
+def modelBuilder(stateList, shouldSave, feature, type):
     hiddenLayers = 3
-    epochs = 20
+    epochs = 1
 
     outputDim = len(stateList)
 
-    lmfcc_train_x_reg = np.load("standardized/lmfcc_train_x_reg.npz", allow_pickle=True)['data'].astype('float32')
+    train_x = np.load("standardized/" + feature + "_train_x_"+ type +".npz", allow_pickle=True)['data'].astype('float32')
     train_y_noncat = np.load("standardized/train_y.npz", allow_pickle=True)['data']
     train_y = np_utils.to_categorical(train_y_noncat, outputDim)
 
-    lmfcc_val_x_reg = np.load("standardized/lmfcc_val_x_reg.npz", allow_pickle=True)['data'].astype('float32')
+    val_x = np.load("standardized/" + feature + "_val_x_" + type + ".npz", allow_pickle=True)['data'].astype('float32')
     val_y_noncat = np.load("standardized/val_y.npz", allow_pickle=True)['data']
     val_y = np_utils.to_categorical(val_y_noncat, outputDim)
-    input_dim = lmfcc_train_x_reg.shape[1]
+    input_dim = train_x.shape[1]
 
     model = Sequential()
     model.add(Dense(256, input_dim=input_dim, activation='relu'))
@@ -304,15 +303,13 @@ def modelBuilder(stateList, shouldSave):
     model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
 
     # Train the model
-    history = model.fit(lmfcc_train_x_reg, train_y, epochs=epochs, batch_size=256, validation_data = (lmfcc_val_x_reg, val_y), verbose = 1)
+    history = model.fit(train_x, train_y, epochs=epochs, batch_size=256, validation_data = (val_x, val_y), verbose = 1)
 
     if shouldSave:
-        model.save('model/model1.h5')
+        model.save('model/model_' + feature + '_' + type + '.h5')
 
-        with open("history/trainHistoryDict_" + str(hiddenLayers) + ".pickle", 'wb') as f:
+        with open("history/trainHistoryDict_" + feature + '_' + type + '_' + str(hiddenLayers) + ".pickle", 'wb') as f:
             pickle.dump(history.history, f)
-
-        print("Learned weights are saved in model/model1.h5")
 
 
 # -- Load model and create stateList -- #
@@ -368,7 +365,6 @@ test_y = standardize(testdata, 'targets', 'all', False, None, "test_y")
 
 '''
 
-#modelBuilder(stateList, True)
+modelBuilder(stateList, True, "lmfcc", "reg")
 
-
-plotHistory()
+#plotHistory("history/trainHistoryDict_3.pickle")
