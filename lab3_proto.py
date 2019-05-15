@@ -12,6 +12,7 @@ from keras.models import load_model
 
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import confusion_matrix
+from sklearn.utils.multiclass import unique_labels
 
 import matplotlib.pyplot as plt
 
@@ -315,33 +316,43 @@ def modelBuilder(stateList, shouldSave, feature, type):
 
 
 
-def plot_confusion_matrix(cm, classes,
-                          normalize=False,
-                          title='Confusion matrix',
-                          cmap=plt.cm.viridis):
-    """
-    This function prints and plots the confusion matrix.
-    Normalization can be applied by setting `normalize=True`.
-    """
+def plot_confusion_matrix(y_true, y_pred, classes,normalize=False, title=None, cmap=plt.cm.Blues):
+    if not title:
+        if normalize:
+            title = 'Normalized confusion matrix'
+        else:
+            title = 'Confusion matrix, without normalization'
+
+    # Compute confusion matrix
+    cm = confusion_matrix(y_true, y_pred)
+    # Only use the labels that appear in the data
     if normalize:
         cm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
         print("Normalized confusion matrix")
     else:
         print('Confusion matrix, without normalization')
 
-    print(cm)
+    fig, ax = plt.subplots()
+    im = ax.imshow(cm, interpolation='nearest', cmap=cmap)
+    ax.figure.colorbar(im, ax=ax)
+    # We want to show all ticks...
+    ax.set(xticks=np.arange(cm.shape[1]),
+           yticks=np.arange(cm.shape[0]),
+           # ... and label them with the respective list entries
+           xticklabels=classes, yticklabels=classes,
+           title=title,
+           ylabel='True label',
+           xlabel='Predicted label')
 
-    plt.imshow(cm, interpolation='nearest', cmap=cmap)
-    plt.title(title)
-    plt.colorbar()
-    tick_marks = np.arange(len(classes))
-    plt.xticks(tick_marks, classes, rotation=45)
-    plt.yticks(tick_marks, classes)
-    #plt.tight_layout()
-    plt.ylabel('True label')
-    plt.xlabel('Predicted label')
+    # Rotate the tick labels and set their alignment.
+    plt.setp(ax.get_xticklabels(), rotation=45, ha="right",
+             rotation_mode="anchor")
 
-def evaluateModel(stateList, feature, type, method):
+    # Loop over data dimensions and create text annotations.
+    fig.tight_layout()
+    return ax
+
+def evaluateModel(stateList, nstates, feature, type, method):
     print("Evaluate model for feature " + feature + " and feature type " + type)
     outputDim = len(stateList)
 
@@ -356,30 +367,42 @@ def evaluateModel(stateList, feature, type, method):
 
     if method == 1:
         # -- frame-by-frame at the state level -- #
-        accuracy = np.count_nonzero(y_truth == pred_y) / float(len(y_truth))
+        accuracy = 100 * np.count_nonzero(y_truth == pred_y) / float(len(y_truth))
         print("Model accuracy: " + str(accuracy))
         # compute confuson matrix!
-        matrix = confusion_matrix(y_truth, pred_y)
-        print(matrix)
 
-        plt.pcolormesh(matrix)
-        plt.show()
-
-        cnf_matrix = confusion_matrix(y_truth, pred_y, labels = [i for i in range(len(stateList))])
-        plot_confusion_matrix(cnf_matrix, classes = stateList, normalize=True)
-        plt.show()
+        plot_confusion_matrix(y_truth, pred_y, classes = stateList, normalize=True,
+                      title='Normalized confusion matrix')
 
 
     elif method == 2:
         # -- frame-by-frame at the phoneme level -- #
-        # compute confuson matrix!
-        pass
+
+        phonemedict = {}
+        for idx, phoneme in enumerate(nstates):
+            phonemedict[phoneme] = idx
+
+        phoneme_y_truth = []
+        phoneme_y_pred = []
+
+        for idx in range(len(y_truth)):
+            phoneme_y_truth.append(phonemedict[stateList[y_truth[idx]][:-2]])
+            phoneme_y_pred.append(phonemedict[stateList[pred_y[idx]][:-2]])
+
+        phoneme_accuracy = 100 * np.count_nonzero(phoneme_y_truth == phoneme_y_pred) / float(len(phoneme_y_truth))
+        print("Model accuracy - frame by frame - phoneme level: " + str(phoneme_accuracy))
+
+        plot_confusion_matrix(phoneme_y_truth, phoneme_y_pred, classes = list(phonemedict.keys()), normalize=True,
+                      title='Normalized confusion matrix')
+
     elif method == 3:
         # -- edit distance at the state level -- #
         pass
     elif method == 4:
         # -- edit distance at the phoneme level -- #
         pass
+
+    plt.show()
 
 
 
@@ -441,4 +464,4 @@ test_y = standardize(testdata, 'targets', 'all', False, None, "test_y")
 
 #plotHistory("history/trainHistoryDict_3.pickle")
 
-evaluateModel(stateList, "lmfcc", "dyn", 1)
+evaluateModel(stateList, nstates, "lmfcc", "dyn", 2)
