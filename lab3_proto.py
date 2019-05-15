@@ -14,6 +14,8 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import confusion_matrix
 from sklearn.utils.multiclass import unique_labels
 
+import distance
+
 import matplotlib.pyplot as plt
 
 from prondict import prondict
@@ -363,17 +365,16 @@ def evaluateModel(stateList, nstates, feature, type, method):
 
     model = load_model('model/model_' + feature + '_'  + type + '.h5')
     prediction = model.predict(test_x)
-    pred_y = np.argmax(prediction, axis = 1)
+    y_pred = np.argmax(prediction, axis = 1)
 
     if method == 1:
         # -- frame-by-frame at the state level -- #
-        accuracy = 100 * np.count_nonzero(y_truth == pred_y) / float(len(y_truth))
+        accuracy = 100 * np.count_nonzero(y_truth == y_pred) / float(len(y_truth))
         print("Model accuracy: " + str(accuracy))
         # compute confuson matrix!
 
-        plot_confusion_matrix(y_truth, pred_y, classes = stateList, normalize=True,
+        plot_confusion_matrix(y_truth, y_pred, classes = stateList, normalize=True,
                       title='Normalized confusion matrix')
-
 
     elif method == 2:
         # -- frame-by-frame at the phoneme level -- #
@@ -387,20 +388,69 @@ def evaluateModel(stateList, nstates, feature, type, method):
 
         for idx in range(len(y_truth)):
             phoneme_y_truth.append(phonemedict[stateList[y_truth[idx]][:-2]])
-            phoneme_y_pred.append(phonemedict[stateList[pred_y[idx]][:-2]])
+            phoneme_y_pred.append(phonemedict[stateList[y_pred[idx]][:-2]])
+
+        truths = 0
+        for x in range(len(phoneme_y_truth)):
+            truths += phoneme_y_truth[x] == phoneme_y_pred[x]
 
         phoneme_accuracy = 100 * np.count_nonzero(phoneme_y_truth == phoneme_y_pred) / float(len(phoneme_y_truth))
-        print("Model accuracy - frame by frame - phoneme level: " + str(phoneme_accuracy))
 
-        plot_confusion_matrix(phoneme_y_truth, phoneme_y_pred, classes = list(phonemedict.keys()), normalize=True,
-                      title='Normalized confusion matrix')
+        print("Model accuracy - frame by frame - phoneme level: " + str(truths/round(len(phoneme_y_truth))))
+
+        #plot_confusion_matrix(phoneme_y_truth, phoneme_y_pred, classes = list(phonemedict.keys()), normalize=True, title='Normalized confusion matrix')
 
     elif method == 3:
         # -- edit distance at the state level -- #
-        pass
+
+        print("Run the model")
+
+        truth_transcription = [y_truth[0]]
+        for i in range(1, len(y_truth)):
+            if y_truth[i] != truth_transcription[-1]:
+                truth_transcription.append(y_truth[i])
+        predicted_transcription = [y_pred[0]]
+        for i in range(1, len(y_pred)):
+            if y_pred[i] != predicted_transcription[-1]:
+                predicted_transcription.append(y_pred[i])
+
+        truth_transcription = ''.join(str(x) for x in truth_transcription)
+        predicted_transcription = ''.join(str(x) for x in predicted_transcription)
+
+        print("Levenshtein distance:")
+        print(distance.nlevenshtein(truth_transcription, predicted_transcription))
+
     elif method == 4:
         # -- edit distance at the phoneme level -- #
-        pass
+
+        phonemedict = {}
+        for idx, phoneme in enumerate(nstates):
+            phonemedict[phoneme] = idx
+
+        phoneme_y_truth = []
+        phoneme_y_pred = []
+
+        for idx in range(len(y_truth)):
+            phoneme_y_truth.append(phonemedict[stateList[y_truth[idx]][:-2]])
+            phoneme_y_pred.append(phonemedict[stateList[y_pred[idx]][:-2]])
+
+
+        gt_phon_transcription = [phoneme_y_truth[0]]
+        for i in range(1, len(phoneme_y_truth)):
+            if phoneme_y_truth[i] != gt_phon_transcription[-1]:
+                gt_phon_transcription.append(phoneme_y_truth[i])
+
+        predicted_phon_transcription = [phoneme_y_pred[0]]
+        for i in range(1, len(phoneme_y_pred)):
+            if phoneme_y_pred[i] != predicted_phon_transcription[-1]:
+                predicted_phon_transcription.append(phoneme_y_pred[i])
+
+        gt_phon_transcription = ''.join(str(x) for x in gt_phon_transcription)
+        predicted_phon_transcription = ''.join(str(x) for x in predicted_phon_transcription)
+
+
+        print("Levenshtein distance (phonemes):")
+        print(distance.nlevenshtein(gt_phon_transcription, predicted_phon_transcription))
 
     plt.show()
 
@@ -464,4 +514,12 @@ test_y = standardize(testdata, 'targets', 'all', False, None, "test_y")
 
 #plotHistory("history/trainHistoryDict_3.pickle")
 
+#evaluateModel(stateList, nstates, "lmfcc", "reg", 1)
+#evaluateModel(stateList, nstates, "lmfcc", "dyn", 1)
+#evaluateModel(stateList, nstates, "mspec", "reg", 1)
+#evaluateModel(stateList, nstates, "mspec", "dyn", 1)
+
+evaluateModel(stateList, nstates, "lmfcc", "reg", 2)
 evaluateModel(stateList, nstates, "lmfcc", "dyn", 2)
+evaluateModel(stateList, nstates, "mspec", "reg", 2)
+evaluateModel(stateList, nstates, "mspec", "dyn", 2)
